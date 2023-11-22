@@ -1,0 +1,183 @@
+#include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
+#include <vector>
+#include <iostream>
+#include <fstream>
+#include <limits>
+#include <cmath>
+#include <memory>
+#include <random>
+
+struct Ray {
+	glm::vec3 origin;
+	glm::vec3 direction;
+
+	Ray(const glm::vec3& o, const glm::vec3& d) : origin(o), direction(glm::normalize(d)) {}
+};
+
+class SceneObject {
+public:
+	glm::vec3 color;
+	float specularStrength;
+	float shininess;
+	float transparency;
+	float refractiveIndex;
+
+	SceneObject(const glm::vec3& col, float specStrength, float shine, float transp, float refractIdx)
+		: color(col), specularStrength(specStrength), shininess(shine), transparency(transp), refractiveIndex(refractIdx) {}
+	virtual bool intersect(const Ray& ray, float& distance, glm::vec3& normal) const = 0;
+};
+
+class Sphere : public SceneObject {
+private:
+	glm::vec3 center;
+	float radius;
+
+public:
+	Sphere(const glm::vec3& c, float r, const glm::vec3& col, float specStrength, float shine, float transp, float refractIdx)
+		: SceneObject(col, specStrength, shine, transp, refractIdx), center(c), radius(r) {}
+
+	bool intersect(const Ray& ray, float& distance, glm::vec3& normal) const override {
+		glm::vec3 oc = ray.origin - center;
+		float a = glm::dot(ray.direction, ray.direction);
+		float b = 2.0f * glm::dot(oc, ray.direction);
+		float c = glm::dot(oc, oc) - radius * radius;
+		float discriminant = b * b - 4 * a * c;
+		if (discriminant > 0) {
+			float dist = (-b - sqrt(discriminant)) / (2.0f * a);
+			if (dist > 0 && dist < distance) {
+				distance = dist;
+				normal = glm::normalize(ray.origin + ray.direction * distance - center);
+				return true;
+			}
+		}
+		return false;
+	}
+};
+
+class PointLight {
+public:
+	glm::vec3 position;
+	glm::vec3 color;
+	float intensity;
+
+	PointLight(const glm::vec3& pos, const glm::vec3& col, float inten)
+		: position(pos), color(col), intensity(inten) {}
+};
+
+glm::vec3 calculateLighting(const glm::vec3& point, const glm::vec3& normal, const glm::vec3& viewDir, const PointLight& light) {
+	glm::vec3 lightDir = glm::normalize(light.position - point);
+	float diff = glm::max(glm::dot(normal, lightDir), 0.0f);
+	glm::vec3 diffuse = diff * light.intensity * light.color;
+	glm::vec3 reflectDir = glm::reflect(-lightDir, normal);
+	float spec = glm::pow(glm::max(glm::dot(viewDir, reflectDir), 0.0f), 32.0f);
+	glm::vec3 specular = spec * light.intensity * light.color;
+	return diffuse + specular;
+}
+
+glm::vec3 trace(const Ray& ray, const std::vector<std::unique_ptr<SceneObject>>& objects, const std::vector<PointLight>& lights, int depth, std::mt19937& rng) {
+	if (depth <= 0) {
+		return glm::vec3(0);
+	}
+
+	float closestDistance = std::numeric_limits<float>::max();
+	glm::vec3 closestNormal;
+	glm::vec3 pixelColor(0);
+	SceneObject* closestObject = nullptr;
+
+	for (const auto& object : objects) {
+		glm::vec3 normal;
+		float distance = std::numeric_limits<float>::max();
+		if (object->intersect(ray, distance, normal)) {
+			if (distance < closestDistance) {
+				closestDistance = distance;
+				closestNormal = normal;
+				closestObject = object.get();
+			}
+		}
+	}
+
+	if (closestObject) {
+		glm::vec3 point = ray.origin + ray.direction * closestDistance;
+		glm::vec3 viewDir = -ray.direction;
+		for (const auto& light : lights) {
+			glm::vec3 lighting = calculateLighting(point, closestNormal, viewDir, light);
+			pixelColor += lighting * closestObject->color;
+		}
+	}
+	else {
+		// Background color
+		pixelColor = glm::vec3(0.01f, 0.01f, 0.02f);  // Dark space color
+	}
+
+	return pixelColor;
+}
+
+void createSolarSystem(std::vector<std::unique_ptr<SceneObject>>& objects) {
+	// Sun
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(0, 0, -20), 2.0, glm::vec3(1.0, 1.0, 0.0), 1.0, 100, 0.0, 0.0));
+
+	// Mercury
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(-3, 0, -10), 0.2, glm::vec3(0.5, 0.3, 0.3), 0.5, 100, 0.0, 0.0));
+
+	// Venus
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(-2, 0, -8), 0.4, glm::vec3(0.8, 0.7, 0.5), 0.5, 100, 0.0, 0.0));
+
+	// Earth
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(-1, 0, -6), 0.5, glm::vec3(0.0, 0.0, 1.0), 0.5, 100, 0.0, 0.0));
+
+	// Mars
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(1, 0, -4), 0.3, glm::vec3(1.0, 0.0, 0.0), 0.5, 100, 0.0, 0.0));
+
+	// Jupiter
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(3, 0, -2), 1.0, glm::vec3(0.8, 0.6, 0.4), 0.5, 100, 0.0, 0.0));
+
+	// Saturn
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(5, 0, 0), 0.8, glm::vec3(0.9, 0.8, 0.5), 0.5, 100, 0.0, 0.0));
+
+	// Uranus
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(7, 0, 2), 0.6, glm::vec3(0.4, 0.6, 0.8), 0.5, 100, 0.0, 0.0));
+
+	// Neptune
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(9, 0, 4), 0.6, glm::vec3(0.2, 0.4, 0.8), 0.5, 100, 0.0, 0.0));
+
+	// Pluto (for completeness)
+	objects.push_back(std::make_unique<Sphere>(glm::vec3(11, 0, 6), 0.1, glm::vec3(0.8, 0.7, 0.6), 0.5, 100, 0.0, 0.0));
+}
+
+void renderSolarSystem(int width, int height) {
+	std::vector<std::unique_ptr<SceneObject>> objects;
+	std::vector<PointLight> lights;
+
+	createSolarSystem(objects);
+	lights.push_back(PointLight(glm::vec3(0, 0, -20), glm::vec3(1, 1, 1), 1.0));
+
+	std::ofstream out("solar_2system.ppm");
+	out << "P3\n" << width << ' ' << height << "\n255\n";
+
+	std::random_device rd;
+	std::mt19937 rng(rd());
+
+	float fov = glm::pi<float>() / 3;  // 60 degrees
+	float scale = tan(fov * 0.5f);
+
+	for (int j = 0; j < height; ++j) {
+		for (int i = 0; i < width; ++i) {
+			float x = (2 * (i + 0.5f) / (float)width - 1) * scale * width / (float)height;
+			float y = (1 - 2 * (j + 0.5f) / (float)height) * scale;
+			Ray ray(glm::vec3(0, 0, 0), glm::normalize(glm::vec3(x, y, -1)));
+			glm::vec3 color = trace(ray, objects, lights, 5, rng);
+			out << (int)(color.r * 255) << ' ' << (int)(color.g * 255) << ' ' << (int)(color.b * 255) << '\n';
+		}
+	}
+
+	out.close();
+}
+
+int main() {
+	const int imageWidth = 800;
+	const int imageHeight = 600;
+	renderSolarSystem(imageWidth, imageHeight);
+	std::cout << "Done!" << std::endl;
+	return 0;
+}
